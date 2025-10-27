@@ -1,0 +1,11 @@
+fastapi
+opencv-python
+uvicorn[standard]
+python-multipart
+ultralytics
+cloudinary
+python-dotenv
+motor
+bcrypt
+pytz
+pydantic[email]

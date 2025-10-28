@@ -1,4 +1,5 @@
-from fastapi import FastAPI, File, UploadFile , HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, File, UploadFile , HTTPException 
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import os
@@ -17,6 +18,8 @@ from datetime import datetime
 import pytz
 
 app = FastAPI()
+
+
 load_dotenv()
 tz = pytz.timezone("UTC")
 DESIRED_TIMEZONE = pytz.timezone("Asia/Kolkata")
@@ -36,6 +39,31 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["X-Detection-Results", "X-Detection-Summary"]  
 )
+
+
+@app.get("/ping")
+async def ping():
+    return {
+        "message":"Server running."
+    }
+
+
+# Serving and mounting file
+app.mount("/assets", StaticFiles(directory="dist/assets"), name="assets")
+
+@app.get("/{full_path:path}")
+async def serve_react_app(full_path: str = ""):
+    # Check if the requested path is a file in dist
+    file_path = os.path.join("dist", full_path)
+    
+    # If it's a file that exists, serve it
+    if os.path.isfile(file_path):
+        return FileResponse(file_path)
+    
+    # Otherwise, serve index.html (for React Router)
+    return FileResponse("dist/index.html")
+
+
 
 
 # Signup endpoint
@@ -275,7 +303,6 @@ async def detect_video(file: UploadFile = File(...)):
     response.headers["Access-Control-Expose-Headers"] = "X-Detection-Summary"
     
     return response
-
 
 
 # Single endpoint

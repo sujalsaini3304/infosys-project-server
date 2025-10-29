@@ -16,6 +16,8 @@ from pydantic import BaseModel ,  EmailStr , Field
 from motor.motor_asyncio import AsyncIOMotorClient
 from datetime import datetime
 import pytz
+import resend
+import random
 
 app = FastAPI()
 
@@ -46,6 +48,275 @@ async def ping():
     return {
         "message":"Server running."
     }
+
+
+
+class ResetRequest(BaseModel):
+    email: EmailStr
+
+
+def generate_verification_code():
+    """Generate 6-digit verification code"""
+    return random.randint(100000, 999999)
+
+
+@app.post("/api/send/auth/reset/password/email")
+async def send_reset_email(payload: ResetRequest):
+    resend.api_key = os.getenv("RESEND_API")
+    users_collection = db["user"]
+
+    # Check if user exists
+    user = await users_collection.find_one({"email": payload.email})
+    if not user:
+        raise HTTPException(status_code=404, detail="No account found with this email address")
+
+    reset_code = generate_verification_code()
+    username = user["username"]
+
+    # Email content
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Password Reset Request</title>
+        <style>
+            body {{
+                font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                background-color: #f9fafb;
+                margin: 0;
+                padding: 0;
+            }}
+            .container {{
+                max-width: 540px;
+                background: #ffffff;
+                margin: 40px auto;
+                border-radius: 12px;
+                box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+                border: 1px solid #e5e7eb;
+                overflow: hidden;
+            }}
+            .header {{
+                background: #2563eb;
+                color: white;
+                text-align: center;
+                padding: 20px;
+                font-size: 20px;
+                font-weight: 600;
+            }}
+            .content {{
+                padding: 30px;
+                text-align: center;
+            }}
+            .greeting {{
+                font-size: 16px;
+                color: #111827;
+                margin-bottom: 10px;
+            }}
+            .message {{
+                font-size: 15px;
+                color: #374151;
+                margin: 8px 0 18px;
+                line-height: 1.5;
+            }}
+            .code-box {{
+                font-size: 30px;
+                font-weight: bold;
+                letter-spacing: 8px;
+                color: #1f2937;
+                background: #f3f4f6;
+                padding: 14px 22px;
+                border-radius: 8px;
+                display: inline-block;
+                border: 1px solid #d1d5db;
+            }}
+            .footer {{
+                font-size: 12px;
+                color: #6b7280;
+                text-align: center;
+                padding: 18px;
+                border-top: 1px solid #e5e7eb;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">Password Reset Request</div>
+            <div class="content">
+                <p class="greeting">Hey , {username}</p>
+                <p class="message">
+                    We received a request to reset your password for your Crowd Count account.
+                    Use the code below to continue:
+                </p>
+                <div class="code-box">{reset_code}</div>
+                <p class="message">
+                    If you didn’t request a password reset, please ignore this message.
+                    Your account will remain secure.
+                </p>
+            </div>
+            <div class="footer">
+                This is an automated message from Crowd Count. Please do not reply.<br />
+                &copy; 2025 Crowd Count using Video Analytics
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+    try:
+        params: resend.Emails.SendParams = {
+            "from": "Crowd Count <crowd-count@sujalkumarsaini.me>",
+            "to": [payload.email],
+            "subject": "Reset your Crowd Count password",
+            "html": html_content,
+        }
+
+        email = resend.Emails.send(params)
+        print("Password reset email sent:", email)
+
+        return {
+            "success": True,
+            "message": f"Password reset email sent to {payload.email}",
+            "data": {
+                "username": user["username"],
+                "email": user["email"]
+            },
+            "code": reset_code,
+        }
+
+    except Exception as e:
+        print("Error sending reset email:", e)
+        raise HTTPException(status_code=500, detail="Failed to send password reset email")
+
+class UserData(BaseModel):
+    username: str
+    email: EmailStr
+
+
+def generate_verification_code():
+    """Generate 6-digit verification code"""
+    return random.randint(100000, 999999)
+
+@app.post("/api/send/auth/email")
+async def sendEmail(payload: UserData):
+    resend.api_key = os.getenv("RESEND_API")
+    code = generate_verification_code()
+    
+
+    # Email design
+    html_content = f"""
+    <html>
+    <head>
+        <style>
+            body {{
+                font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                background-color: #f9fafb;
+                margin: 0;
+                padding: 0;
+            }}
+            .container {{
+                max-width: 550px;
+                background: #ffffff;
+                margin: 50px auto;
+                border-radius: 14px;
+                box-shadow: 0 4px 18px rgba(0,0,0,0.08);
+                overflow: hidden;
+                border: 1px solid #e5e7eb;
+            }}
+            .header {{
+                background: linear-gradient(90deg, #2563eb, #3b82f6);
+                color: white;
+                text-align: center;
+                padding: 25px 20px;
+                font-size: 22px;
+                font-weight: 700;
+                letter-spacing: 0.6px;
+            }}
+            .content {{
+                padding: 35px 30px;
+                text-align: center;
+            }}
+            .greeting {{
+                font-size: 18px;
+                color: #111827;
+                margin-bottom: 12px;
+            }}
+            .code-box {{
+                font-size: 34px;
+                font-weight: 800;
+                letter-spacing: 10px;
+                color: #1f2937;
+                background: #f3f4f6;
+                display: inline-block;
+                padding: 16px 28px;
+                border-radius: 10px;
+                margin: 25px 0;
+                border: 2px dashed #2563eb;
+            }}
+            .message {{
+                font-size: 16px;
+                color: #374151;
+                margin-top: 10px;
+                line-height: 1.6;
+            }}
+            .footer {{
+                text-align: center;
+                font-size: 13px;
+                color: #9ca3af;
+                padding: 18px;
+                border-top: 1px solid #e5e7eb;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">Crowd Count using Video Analytics</div>
+            <div class="content">
+                <p class="greeting">Hey , <b>{payload.username}</b>,</p>
+                <p class="message">
+                    We're thrilled to have you on board!<br>
+                    Use the verification code below to confirm your email address
+                </p>
+                <div class="code-box">{code}</div>
+                <p class="message">
+                    If you didn’t request this email, no worries — simply ignore it.
+                </p>
+            </div>
+            <div class="footer">
+                Made with love by the Sujal Kumar Saini
+                <br>
+                &copy; 2025 Crowd Count using Video Analytics
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+    try:
+        params: resend.Emails.SendParams = {
+            "from": "Crowd Count <crowd-count@sujalkumarsaini.me>",
+            "to": [payload.email],
+            "subject": "Verify Your Email - Crowd Count using Video Analytics",
+            "html": html_content,
+        }
+
+        email = resend.Emails.send(params)
+        print("Email sent:", email)
+
+        return {
+            "success": True,
+            "message": f"Verification email sent to {payload.email}",
+            "code": code, 
+        }
+
+    except Exception as e:
+        print("Error sending email:", e)
+        raise HTTPException(status_code=500, detail="Failed to send verification email")
+
+
+
+
 
 
 # Serving and mounting file
@@ -87,7 +358,7 @@ async def create_user(payload: User):
         "username": payload.username,
         "email": payload.email,
         "password": hashed_password.decode('utf-8'),  # Store as string
-        "is_email_verified": False,
+        "is_email_verified": True,
         "created_at": datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
     }
 
@@ -97,6 +368,33 @@ async def create_user(payload: User):
         "message": "User created successfully",
         "id": str(db_response.inserted_id)
     }
+
+
+
+# Delete user from database
+class DeleteUserRequest(BaseModel):
+    email: EmailStr
+
+@app.post("/api/delete/user")
+async def delete_user(payload: DeleteUserRequest):
+    collection = db["user"]
+
+    try:
+        result = await collection.delete_one({"email": payload.email})
+
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        return {"success": True, "message": "User deleted successfully"}
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        print("Error deleting user:", e)
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+
+
 
 
 

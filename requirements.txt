@@ -9,3 +9,4 @@ motor
 bcrypt
 pytz
 pydantic[email]
+resend

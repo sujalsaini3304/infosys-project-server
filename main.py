@@ -1,5 +1,5 @@
 from fastapi.staticfiles import StaticFiles
-from fastapi import FastAPI, File, UploadFile , HTTPException 
+from fastapi import FastAPI, File,Form , UploadFile , HTTPException 
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import os
@@ -8,6 +8,8 @@ import cv2
 from ultralytics import YOLO
 import json
 from collections import defaultdict
+from typing import Optional
+import time 
 
 
 from dotenv import load_dotenv
@@ -39,7 +41,15 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Detection-Results", "X-Detection-Summary"]  
+    # expose_headers=["X-Detection-Results", "X-Detection-Summary"]
+    expose_headers=[
+        "X-Detection-Summary",
+        "X-Zone-Summary",
+        "X-Processing-Time",
+        "X-Detection-Results",
+        "X-Frame-Density",
+        "X-Zone-Density"
+    ],  
 )
 
 
@@ -189,6 +199,9 @@ async def send_reset_email(payload: ResetRequest):
         print("Error sending reset email:", e)
         raise HTTPException(status_code=500, detail="Failed to send password reset email")
 
+
+
+# Signup process endpoint... 
 class UserData(BaseModel):
     username: str
     email: EmailStr
@@ -347,7 +360,7 @@ class User(BaseModel):
 async def create_user(payload: User):
     collection = db["user"]
 
-    # 🔐 Check if the user already exists
+    # Check if the user already exists
     existing_user = await collection.find_one({"email": payload.email})
     if existing_user:
         raise HTTPException(status_code=409, detail="User already exists")
@@ -740,6 +753,442 @@ async def detect_media(file: UploadFile = File(...)):
             status_code=400,
             detail=f"Unsupported file type: {file_extension}. Please upload an image or video file."
         )
+    
+
+# @app.post("/new/upload")
+# async def detect_media(
+#     file: UploadFile = File(...),
+#     zones: Optional[str] = Form(None)
+# ):
+#     start_time = time.time()
+#     upload_dir = "temp/uploads"
+#     output_dir = "temp/output"
+
+#     # Clean temp directory
+#     if os.path.exists("temp"):
+#         shutil.rmtree("temp")
+#     os.makedirs(upload_dir, exist_ok=True)
+#     os.makedirs(output_dir, exist_ok=True)
+
+#     # Save file
+#     file_path = os.path.join(upload_dir, file.filename)
+#     with open(file_path, "wb") as buffer:
+#         shutil.copyfileobj(file.file, buffer)
+
+#     file_extension = file.filename.lower().split('.')[-1]
+#     image_ext = ['jpg', 'jpeg', 'png', 'bmp', 'gif', 'tiff', 'webp']
+#     video_ext = ['mp4', 'avi', 'mov', 'mkv', 'flv', 'wmv', 'webm']
+
+#     # Parse zones
+#     zone_list = []
+#     if zones:
+#         try:
+#             zone_list = json.loads(zones)
+#         except json.JSONDecodeError:
+#             raise HTTPException(status_code=400, detail="Invalid zone JSON format")
+
+#     # ---------------- IMAGE HANDLING ----------------
+#     if file_extension in image_ext:
+#         results = model(file_path)
+#         result = results[0]
+#         height, width = result.orig_img.shape[:2]
+
+#         detections = []
+#         people_coords = []
+
+#         for box in result.boxes:
+#             cls_id = int(box.cls[0])
+#             conf = float(box.conf[0]) * 100
+#             label = model.names[cls_id]
+
+#             if label == "person":
+#                 x1, y1, x2, y2 = map(int, box.xyxy[0])
+#                 cx, cy = int((x1 + x2) / 2), int((y1 + y2) / 2)
+#                 people_coords.append((cx, cy))
+
+#             detections.append({"object": label, "confidence": round(conf, 2)})
+
+#         # --- Frame Density ---
+#         total_people = len(people_coords)
+#         frame_density = round(total_people / (width * height), 8)  # small decimal
+
+#         # --- Zone Density (if zones exist) ---
+#         zone_density_list = []
+#         for i, zone in enumerate(zone_list):
+#             zx1, zy1 = zone["top_left"]["x"], zone["top_left"]["y"]
+#             zx2, zy2 = zone["bottom_right"]["x"], zone["bottom_right"]["y"]
+#             name = zone.get("name", f"Zone {i+1}")
+#             area = (zx2 - zx1) * (zy2 - zy1)
+#             if area <= 0:
+#                 density = 0
+#             else:
+#                 count_in_zone = sum(zx1 < x < zx2 and zy1 < y < zy2 for (x, y) in people_coords)
+#                 density = round(count_in_zone / area, 8)
+#             zone_density_list.append({"zone_name": name, "zone_density": density})
+
+#         # --- Object Summary ---
+#         summary_dict = defaultdict(lambda: {"count": 0, "avg_conf": 0})
+#         for det in detections:
+#             obj = det["object"]
+#             summary_dict[obj]["count"] += 1
+#             summary_dict[obj]["avg_conf"] += det["confidence"]
+
+#         summary = [
+#             {
+#                 "object": obj,
+#                 "count": data["count"],
+#                 "avg_confidence": round(data["avg_conf"] / data["count"], 2)
+#             }
+#             for obj, data in summary_dict.items()
+#         ]
+
+#         # Save annotated image
+#         annotated = result.plot()
+#         output_file = os.path.join(output_dir, f"annotated_{file.filename}")
+#         cv2.imwrite(output_file, annotated)
+
+#         end_time = time.time()
+#         processing_time = round(end_time - start_time, 2)
+
+#         # --- Response ---
+#         response = FileResponse(output_file, media_type="image/jpeg")
+#         response.headers["X-Detection-Summary"] = json.dumps(summary)
+#         response.headers["X-Processing-Time"] = str(processing_time)
+#         response.headers["X-Frame-Density"] = str(frame_density)
+#         if zone_density_list:
+#             response.headers["X-Zone-Density"] = json.dumps(zone_density_list)
+#         response.headers["Access-Control-Expose-Headers"] = (
+#             "X-Detection-Summary, X-Processing-Time, X-Frame-Density, X-Zone-Density"
+#         )
+#         return response
+
+#     # ---------------- VIDEO HANDLING ----------------
+#     elif file_extension in video_ext:
+#         cap = cv2.VideoCapture(file_path)
+#         fps = cap.get(cv2.CAP_PROP_FPS) or 30
+#         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+#         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+#         output_file = os.path.join(output_dir, f"annotated_{file.filename}")
+#         fourcc = cv2.VideoWriter_fourcc(*'avc1')
+#         out = cv2.VideoWriter(output_file, fourcc, fps, (width, height))
+
+#         summary_dict = defaultdict(lambda: {"count": 0, "avg_conf": 0})
+#         zone_summary = [{"zone_name": z["name"], "total_count": 0} for z in zone_list]
+#         total_people_detected = 0
+#         total_frames = 0
+
+#         while True:
+#             ret, frame = cap.read()
+#             if not ret:
+#                 break
+#             total_frames += 1
+#             results = model(frame)
+#             result = results[0]
+#             people_coords = []
+#             frame_person_count = 0
+
+#             for box in result.boxes:
+#                 cls_id = int(box.cls[0])
+#                 label = model.names[cls_id]
+#                 conf = float(box.conf[0]) * 100
+
+#                 if label == "person":
+#                     x1, y1, x2, y2 = map(int, box.xyxy[0])
+#                     cx, cy = int((x1 + x2) / 2), int((y1 + y2) / 2)
+#                     people_coords.append((cx, cy))
+#                     frame_person_count += 1
+#                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+#                     cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
+
+#                 summary_dict[label]["count"] += 1
+#                 summary_dict[label]["avg_conf"] += conf
+
+#             total_people_detected += frame_person_count
+
+#             cv2.putText(frame, f"Total People: {frame_person_count}", (20, 40),
+#                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 3)
+
+#             for i, zone in enumerate(zone_list):
+#                 zx1, zy1 = zone["top_left"]["x"], zone["top_left"]["y"]
+#                 zx2, zy2 = zone["bottom_right"]["x"], zone["bottom_right"]["y"]
+#                 name = zone.get("name", f"Zone {i+1}")
+#                 color = (255, 0, 0)
+#                 cv2.rectangle(frame, (zx1, zy1), (zx2, zy2), color, 2)
+#                 count_in_zone = sum(zx1 < x < zx2 and zy1 < y < zy2 for (x, y) in people_coords)
+#                 zone_summary[i]["total_count"] += count_in_zone
+
+#                 label_text = f"{name}: {count_in_zone}"
+#                 text_x, text_y = zx1 + 5, zy1 - 10 if zy1 - 10 > 20 else zy1 + 20
+#                 cv2.putText(frame, label_text, (text_x, text_y),
+#                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+#             out.write(frame)
+
+#         cap.release()
+#         out.release()
+
+#         # --- Frame Density (average across frames) ---
+#         frame_density = round((total_people_detected / total_frames) / (width * height), 8)
+
+#         # --- Zone Density ---
+#         zone_density_list = []
+#         for i, zone in enumerate(zone_list):
+#             zx1, zy1 = zone["top_left"]["x"], zone["top_left"]["y"]
+#             zx2, zy2 = zone["bottom_right"]["x"], zone["bottom_right"]["y"]
+#             name = zone.get("name", f"Zone {i+1}")
+#             area = (zx2 - zx1) * (zy2 - zy1)
+#             total_count = zone_summary[i]["total_count"]
+#             avg_count = total_count / total_frames if total_frames > 0 else 0
+#             density = round(avg_count / area, 8) if area > 0 else 0
+#             zone_density_list.append({"zone_name": name, "zone_density": density})
+
+#         # --- Summary for header ---
+#         summary = [
+#             {
+#                 "object": obj,
+#                 "count": data["count"],
+#                 "avg_confidence": round(data["avg_conf"] / data["count"], 2)
+#             }
+#             for obj, data in summary_dict.items()
+#         ]
+
+#         end_time = time.time()
+#         processing_time = round(end_time - start_time, 2)
+
+#         response = FileResponse(output_file, media_type="video/mp4")
+#         response.headers["X-Processing-Time"] = str(processing_time)
+#         response.headers["X-Detection-Summary"] = json.dumps(summary)
+#         response.headers["X-Zone-Summary"] = json.dumps(zone_summary)
+#         response.headers["X-Frame-Density"] = str(frame_density)
+#         if zone_density_list:
+#             response.headers["X-Zone-Density"] = json.dumps(zone_density_list)
+#         response.headers["Access-Control-Expose-Headers"] = (
+#             "X-Detection-Summary, X-Zone-Summary, X-Frame-Density, X-Zone-Density, X-Processing-Time"
+#         )
+#         return response
+
+#     else:
+#         raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_extension}")
+
+
+@app.post("/new/upload")
+async def detect_media(
+    file: UploadFile = File(...),
+    zones: Optional[str] = Form(None)
+):
+    start_time = time.time()
+    upload_dir = "temp/uploads"
+    output_dir = "temp/output"
+
+    # Reset temp directories
+    if os.path.exists("temp"):
+        shutil.rmtree("temp")
+    os.makedirs(upload_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Save the uploaded file
+    file_path = os.path.join(upload_dir, file.filename)
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # Determine file type
+    file_extension = file.filename.lower().split('.')[-1]
+    image_ext = ['jpg', 'jpeg', 'png', 'bmp', 'gif', 'tiff', 'webp']
+    video_ext = ['mp4', 'avi', 'mov', 'mkv', 'flv', 'wmv', 'webm']
+
+    # Parse zone JSON (if present)
+    zone_list = []
+    if zones:
+        try:
+            zone_list = json.loads(zones)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid zone JSON format")
+
+    # -----------------------------------------------------------
+    # IMAGE HANDLING
+    # -----------------------------------------------------------
+    if file_extension in image_ext:
+        results = model(file_path)
+        result = results[0]
+        height, width = result.orig_img.shape[:2]
+
+        people_coords = []
+        detections = []
+
+        for box in result.boxes:
+            cls_id = int(box.cls[0])
+            conf = float(box.conf[0]) * 100
+            label = model.names[cls_id]
+
+            # Only consider "person" for density
+            if label == "person":
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                people_coords.append((cx, cy))
+
+            detections.append({"object": label, "confidence": round(conf, 2)})
+
+        total_people = len(people_coords)
+        frame_density = round(total_people / (width * height), 8)
+
+        # --- Zone Density Calculation ---
+        zone_density_list = []
+        for i, zone in enumerate(zone_list):
+            zx1, zy1 = zone["top_left"]["x"], zone["top_left"]["y"]
+            zx2, zy2 = zone["bottom_right"]["x"], zone["bottom_right"]["y"]
+            name = zone.get("name", f"Zone {i+1}")
+            area = max((zx2 - zx1) * (zy2 - zy1), 1)  # avoid divide by zero
+
+            count_in_zone = sum(zx1 < x < zx2 and zy1 < y < zy2 for (x, y) in people_coords)
+            density = round(count_in_zone / area, 8)
+            zone_density_list.append({"zone_name": name, "zone_density": density})
+
+        # --- Object Summary ---
+        summary_dict = defaultdict(lambda: {"count": 0, "avg_conf": 0})
+        for det in detections:
+            obj = det["object"]
+            summary_dict[obj]["count"] += 1
+            summary_dict[obj]["avg_conf"] += det["confidence"]
+
+        summary = [
+            {
+                "object": obj,
+                "count": data["count"],
+                "avg_confidence": round(data["avg_conf"] / data["count"], 2)
+            }
+            for obj, data in summary_dict.items()
+        ]
+
+        annotated = result.plot()
+        output_file = os.path.join(output_dir, f"annotated_{file.filename}")
+        cv2.imwrite(output_file, annotated)
+
+        end_time = time.time()
+        processing_time = round(end_time - start_time, 2)
+
+        response = FileResponse(output_file, media_type="image/jpeg")
+        response.headers["X-Detection-Summary"] = json.dumps(summary)
+        response.headers["X-Processing-Time"] = str(processing_time)
+        response.headers["X-Frame-Density"] = str(frame_density)
+        if zone_density_list:
+            response.headers["X-Zone-Density"] = json.dumps(zone_density_list)
+        response.headers["Access-Control-Expose-Headers"] = (
+            "X-Detection-Summary, X-Processing-Time, X-Frame-Density, X-Zone-Density"
+        )
+        return response
+
+    # -----------------------------------------------------------
+    # VIDEO HANDLING
+    # -----------------------------------------------------------
+    elif file_extension in video_ext:
+        cap = cv2.VideoCapture(file_path)
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        output_file = os.path.join(output_dir, f"annotated_{file.filename}")
+        fourcc = cv2.VideoWriter_fourcc(*'avc1')
+        out = cv2.VideoWriter(output_file, fourcc, fps, (width, height))
+
+        summary_dict = defaultdict(lambda: {"count": 0, "avg_conf": 0})
+        zone_summary = [{"zone_name": z["name"], "total_count": 0} for z in zone_list]
+
+        total_people_detected = 0
+        total_frames = 0
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            total_frames += 1
+
+            results = model(frame)
+            result = results[0]
+            people_coords = []
+            frame_person_count = 0
+
+            for box in result.boxes:
+                cls_id = int(box.cls[0])
+                label = model.names[cls_id]
+                conf = float(box.conf[0]) * 100
+
+                if label == "person":
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                    people_coords.append((cx, cy))
+                    frame_person_count += 1
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
+
+                summary_dict[label]["count"] += 1
+                summary_dict[label]["avg_conf"] += conf
+
+            total_people_detected += frame_person_count
+
+            # Draw total count on frame
+            cv2.putText(frame, f"People: {frame_person_count}", (20, 40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 3)
+
+            # Draw and count per zone
+            for i, zone in enumerate(zone_list):
+                zx1, zy1 = zone["top_left"]["x"], zone["top_left"]["y"]
+                zx2, zy2 = zone["bottom_right"]["x"], zone["bottom_right"]["y"]
+                name = zone.get("name", f"Zone {i+1}")
+                color = (255, 0, 0)
+                cv2.rectangle(frame, (zx1, zy1), (zx2, zy2), color, 2)
+                count_in_zone = sum(zx1 < x < zx2 and zy1 < y < zy2 for (x, y) in people_coords)
+                zone_summary[i]["total_count"] += count_in_zone
+
+                label_text = f"{name}: {count_in_zone}"
+                cv2.putText(frame, label_text, (zx1 + 5, zy1 - 10 if zy1 - 10 > 20 else zy1 + 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+            out.write(frame)
+
+        cap.release()
+        out.release()
+
+        # --- Frame Density (average per frame) ---
+        avg_people_per_frame = total_people_detected / total_frames if total_frames > 0 else 0
+        frame_density = round(avg_people_per_frame / (width * height), 8)
+
+        # --- Zone Density ---
+        zone_density_list = []
+        for i, zone in enumerate(zone_list):
+            zx1, zy1 = zone["top_left"]["x"], zone["top_left"]["y"]
+            zx2, zy2 = zone["bottom_right"]["x"], zone["bottom_right"]["y"]
+            name = zone.get("name", f"Zone {i+1}")
+            area = max((zx2 - zx1) * (zy2 - zy1), 1)
+            avg_count = zone_summary[i]["total_count"] / total_frames if total_frames > 0 else 0
+            density = round(avg_count / area, 8)
+            zone_density_list.append({"zone_name": name, "zone_density": density})
+
+        summary = [
+            {
+                "object": obj,
+                "count": data["count"],
+                "avg_confidence": round(data["avg_conf"] / data["count"], 2)
+            }
+            for obj, data in summary_dict.items()
+        ]
+
+        end_time = time.time()
+        processing_time = round(end_time - start_time, 2)
+
+        response = FileResponse(output_file, media_type="video/mp4")
+        response.headers["X-Processing-Time"] = str(processing_time)
+        response.headers["X-Detection-Summary"] = json.dumps(summary)
+        response.headers["X-Frame-Density"] = str(frame_density)
+        if zone_density_list:
+            response.headers["X-Zone-Density"] = json.dumps(zone_density_list)
+        response.headers["Access-Control-Expose-Headers"] = (
+            "X-Detection-Summary, X-Frame-Density, X-Zone-Density, X-Processing-Time"
+        )
+        return response
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_extension}")
 
 
 

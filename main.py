@@ -1,10 +1,15 @@
 from fastapi.staticfiles import StaticFiles
-from fastapi import FastAPI, File,Form , UploadFile , HTTPException 
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File,Form , UploadFile , HTTPException
+from fastapi.responses import FileResponse , StreamingResponse , HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+import asyncio
+import numpy as np
+import subprocess
 import os
 import shutil
 import cv2
+import traceback
+import tempfile
 from ultralytics import YOLO
 import json
 from collections import defaultdict
@@ -467,7 +472,6 @@ async def  update_password(payload : UserInfo ):
             "message" : "Password not changed.",
             "flag" : False
         }
-
 
 
 
@@ -1191,7 +1195,431 @@ async def detect_media(
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_extension}")
 
 
+# @app.post("/new/stream", response_class=StreamingResponse)
+# async def stream_video(file: UploadFile = File(...), zones: str = Form(None)):
+#     import uuid
+#     import cv2
+#     import json
+#     import os
+#     import shutil
+#     import time
+#     from collections import defaultdict
+
+#     TEMP_DIR = "temp"
+#     os.makedirs(TEMP_DIR, exist_ok=True)
+
+#     # Save uploaded file
+#     temp_path = os.path.join(TEMP_DIR, f"{uuid.uuid4()}.mp4")
+#     with open(temp_path, "wb") as buffer:
+#         shutil.copyfileobj(file.file, buffer)
+
+#     # Parse zones
+#     zone_list = json.loads(zones) if zones else []
+
+#     def generate_stream():
+#         cap = cv2.VideoCapture(temp_path)
+#         if not cap.isOpened():
+#             print("Error: Cannot open video")
+#             return
+
+#         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+#         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+#         # Global analytics
+#         summary_dict = defaultdict(lambda: {"count": 0, "avg_conf": 0})
+#         zone_summary = [{"zone_name": z.get("name", f"Zone {i+1}"), "total_count": 0} for i, z in enumerate(zone_list)]
+#         total_people = 0
+#         total_frames = 0
+
+#         while True:
+#             ret, frame = cap.read()
+#             if not ret:
+#                 break
+
+#             total_frames += 1
+#             results = model(frame)
+#             result = results[0]
+
+#             people_coords = []
+#             frame_person_count = 0
+
+#             # YOLO runs
+#             for box in result.boxes:
+#                 cls_id = int(box.cls[0])
+#                 label = model.names[cls_id]
+#                 conf = float(box.conf[0]) * 100
+
+#                 summary_dict[label]["count"] += 1
+#                 summary_dict[label]["avg_conf"] += conf
+
+#                 if label == "person":
+#                     x1, y1, x2, y2 = map(int, box.xyxy[0])
+#                     cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+
+#                     people_coords.append((cx, cy))
+#                     frame_person_count += 1
+
+#                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+#                     cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
+
+#             total_people += frame_person_count
+
+#             # Draw total persons count
+#             cv2.putText(frame, f"People: {frame_person_count}", (20, 40),
+#                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 3)
+
+#             # Process all zones
+#             for i, zone in enumerate(zone_list):
+#                 zx1 = zone["top_left"]["x"]
+#                 zy1 = zone["top_left"]["y"]
+#                 zx2 = zone["bottom_right"]["x"]
+#                 zy2 = zone["bottom_right"]["y"]
+
+#                 name = zone.get("name", f"Zone {i+1}")
+#                 color_hex = zone.get("color", "#3B82F6")
+
+#                 rgb = tuple(int(color_hex[j:j+2], 16) for j in (1, 3, 5))
+#                 color_bgr = (rgb[2], rgb[1], rgb[0])
+
+#                 cv2.rectangle(frame, (zx1, zy1), (zx2, zy2), color_bgr, 3)
+
+#                 count_zone = sum(zx1 < x < zx2 and zy1 < y < zy2 for (x, y) in people_coords)
+#                 zone_summary[i]["total_count"] += count_zone
+
+#                 cv2.putText(frame, f"{name}: {count_zone}",
+#                             (zx1 + 5, zy1 - 10 if zy1 > 30 else zy1 + 20),
+#                             cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+#                             (255, 255, 255), 2)
+
+#             # Encode frame
+#             ok, jpg = cv2.imencode(".jpg", frame)
+#             if not ok:
+#                 continue
+
+#             yield (
+#                 b"--frame\r\n"
+#                 b"Content-Type: image/jpeg\r\n\r\n" +
+#                 jpg.tobytes() +
+#                 b"\r\n"
+#             )
+
+#         cap.release()
+#         cv2.destroyAllWindows()
+
+#         try:
+#             os.remove(temp_path)
+#         except:
+#             pass
+
+#     return StreamingResponse(generate_stream(),
+#         media_type="multipart/x-mixed-replace; boundary=frame")
 
 
+# new stream 2
+
+# @app.post("/new/stream", response_class=StreamingResponse)
+# async def stream_video(file: UploadFile = File(...), zones: str = Form(None)):
+#     import uuid
+#     import cv2
+#     import json
+#     import os
+#     import shutil
+#     from collections import defaultdict
+#     import asyncio
+
+#     TEMP_DIR = "temp/uploads"
+
+#     # Reset temp directories
+#     if os.path.exists("temp/uploads"):
+#        shutil.rmtree("temp/uploads")
+#     os.makedirs(TEMP_DIR, exist_ok=True)
+
+#     # Save uploaded file to temp folder
+#     temp_path = os.path.join(TEMP_DIR, f"{uuid.uuid4()}.mp4")
+#     with open(temp_path, "wb") as buffer:
+#         shutil.copyfileobj(file.file, buffer)
+
+#     # Parse zones
+#     zone_list = json.loads(zones) if zones else []
+
+#     async def generate_stream():
+#         cap = None
+
+#         try:
+#             cap = cv2.VideoCapture(temp_path)
+#             if not cap.isOpened():
+#                 print("Error: Cannot open video")
+#                 return
+
+#             # ANALYTICS (unchanged)
+#             summary_dict = defaultdict(lambda: {"count": 0, "avg_conf": 0})
+#             zone_summary = [
+#                 {"zone_name": z.get("name", f"Zone {i+1}"), "total_count": 0}
+#                 for i, z in enumerate(zone_list)
+#             ]
+#             total_people = 0
+#             total_frames = 0
+
+#             while True:
+#                 ret, frame = cap.read()
+#                 if not ret:
+#                     break
+
+#                 total_frames += 1
+#                 results = model(frame)
+#                 result = results[0]
+
+#                 people_coords = []
+#                 frame_person_count = 0
+
+#                 # YOLO processing (unchanged)
+#                 for box in result.boxes:
+#                     cls_id = int(box.cls[0])
+#                     label = model.names[cls_id]
+#                     conf = float(box.conf[0]) * 100
+
+#                     summary_dict[label]["count"] += 1
+#                     summary_dict[label]["avg_conf"] += conf
+
+#                     if label == "person":
+#                         x1, y1, x2, y2 = map(int, box.xyxy[0])
+#                         cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+
+#                         people_coords.append((cx, cy))
+#                         frame_person_count += 1
+
+#                         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+#                         cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
+
+#                 total_people += frame_person_count
+
+#                 # Draw persons count
+#                 cv2.putText(frame, f"People: {frame_person_count}",
+#                             (20, 40), cv2.FONT_HERSHEY_SIMPLEX,
+#                             1, (0, 255, 255), 3)
+
+#                 # ZONE logic (unchanged)
+#                 for i, zone in enumerate(zone_list):
+#                     zx1 = zone["top_left"]["x"]
+#                     zy1 = zone["top_left"]["y"]
+#                     zx2 = zone["bottom_right"]["x"]
+#                     zy2 = zone["bottom_right"]["y"]
+
+#                     name = zone.get("name", f"Zone {i+1}")
+#                     color_hex = zone.get("color", "#3B82F6")
+
+#                     rgb = tuple(int(color_hex[j:j+2], 16) for j in (1, 3, 5))
+#                     color_bgr = (rgb[2], rgb[1], rgb[0])
+
+#                     cv2.rectangle(frame, (zx1, zy1), (zx2, zy2), color_bgr, 3)
+
+#                     count_zone = sum(zx1 < x < zx2 and zy1 < y < zy2
+#                                      for (x, y) in people_coords)
+#                     zone_summary[i]["total_count"] += count_zone
+
+#                     cv2.putText(frame,
+#                                 f"{name}: {count_zone}",
+#                                 (zx1 + 5, zy1 - 10 if zy1 > 30 else zy1 + 20),
+#                                 cv2.FONT_HERSHEY_SIMPLEX,
+#                                 0.7, (255, 255, 255), 2)
+
+#                 # Encode frame
+#                 ok, jpg = cv2.imencode(".jpg", frame)
+#                 if not ok:
+#                     continue
+
+#                 # STREAM FRAME
+#                 yield (
+#                     b"--frame\r\n"
+#                     b"Content-Type: image/jpeg\r\n\r\n" +
+#                     jpg.tobytes() +
+#                     b"\r\n"
+#                 )
+
+#                 # IMPORTANT: allows cancelling + avoids locking
+#                 await asyncio.sleep(0.01)
+
+#         except asyncio.CancelledError:
+#             print("🔴 Client closed the stream abruptly (browser closed).")
+
+#         finally:
+#             # ALWAYS release file handle
+#             if cap is not None:
+#                 cap.release()
+#                 print("🟢 VideoCapture released (safe).")
+
+#             # Give Windows time to release file lock
+#             await asyncio.sleep(0.05)
+
+#             # Remove temp file safely
+#             # try:
+#             #     os.remove(temp_path)
+#             #     print("🟢 Temp video deleted:", temp_path)
+#             # except Exception as e:
+#             #     print("⚠️ Temp delete failed:", e)
+
+#     return StreamingResponse(
+#         generate_stream(),
+#         media_type="multipart/x-mixed-replace; boundary=frame"
+#     )
+
+
+
+
+@app.post("/new/stream", response_class=StreamingResponse)
+async def stream_video(file: UploadFile = File(...), zones: str = Form(None)):
+    import uuid
+    import cv2
+    import json
+    import os
+    import shutil
+    from collections import defaultdict
+    import asyncio
+
+    TEMP_DIR = "temp/uploads"
+
+    # Reset temp directories
+    if os.path.exists("temp/uploads"):
+        shutil.rmtree("temp/uploads")
+    os.makedirs(TEMP_DIR, exist_ok=True)
+
+    # Save uploaded file to temp folder
+    temp_path = os.path.join(TEMP_DIR, f"{uuid.uuid4()}.mp4")
+    with open(temp_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # Parse zones
+    zone_list = json.loads(zones) if zones else []
+
+    async def generate_stream():
+        cap = None
+        stream_active = True
+
+        try:
+            cap = cv2.VideoCapture(temp_path)
+            if not cap.isOpened():
+                print("Error: Cannot open video")
+                return
+
+            # ANALYTICS (unchanged)
+            summary_dict = defaultdict(lambda: {"count": 0, "avg_conf": 0})
+            zone_summary = [
+                {"zone_name": z.get("name", f"Zone {i+1}"), "total_count": 0}
+                for i, z in enumerate(zone_list)
+            ]
+            total_people = 0
+            total_frames = 0
+
+            while stream_active:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                total_frames += 1
+                results = model(frame)
+                result = results[0]
+
+                people_coords = []
+                frame_person_count = 0
+
+                # YOLO processing (unchanged)
+                for box in result.boxes:
+                    cls_id = int(box.cls[0])
+                    label = model.names[cls_id]
+                    conf = float(box.conf[0]) * 100
+
+                    summary_dict[label]["count"] += 1
+                    summary_dict[label]["avg_conf"] += conf
+
+                    if label == "person":
+                        x1, y1, x2, y2 = map(int, box.xyxy[0])
+                        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+
+                        people_coords.append((cx, cy))
+                        frame_person_count += 1
+
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                        cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
+
+                total_people += frame_person_count
+
+                # Draw persons count
+                cv2.putText(frame, f"People: {frame_person_count}",
+                            (20, 40), cv2.FONT_HERSHEY_SIMPLEX,
+                            1, (0, 255, 255), 3)
+
+                # ZONE logic (unchanged)
+                for i, zone in enumerate(zone_list):
+                    zx1 = zone["top_left"]["x"]
+                    zy1 = zone["top_left"]["y"]
+                    zx2 = zone["bottom_right"]["x"]
+                    zy2 = zone["bottom_right"]["y"]
+
+                    name = zone.get("name", f"Zone {i+1}")
+                    color_hex = zone.get("color", "#3B82F6")
+
+                    rgb = tuple(int(color_hex[j:j+2], 16) for j in (1, 3, 5))
+                    color_bgr = (rgb[2], rgb[1], rgb[0])
+
+                    cv2.rectangle(frame, (zx1, zy1), (zx2, zy2), color_bgr, 3)
+
+                    count_zone = sum(zx1 < x < zx2 and zy1 < y < zy2
+                                     for (x, y) in people_coords)
+                    zone_summary[i]["total_count"] += count_zone
+
+                    cv2.putText(frame,
+                                f"{name}: {count_zone}",
+                                (zx1 + 5, zy1 - 10 if zy1 > 30 else zy1 + 20),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.7, (255, 255, 255), 2)
+
+                # Encode frame
+                ok, jpg = cv2.imencode(".jpg", frame)
+                if not ok:
+                    continue
+
+                # STREAM FRAME
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n" +
+                    jpg.tobytes() +
+                    b"\r\n"
+                )
+
+                # IMPORTANT: allows cancelling + avoids locking
+                await asyncio.sleep(0.01)
+
+        except asyncio.CancelledError:
+            print("----> Client closed the stream abruptly (browser closed).")
+            stream_active = False
+
+        except Exception as e:
+            print(f"----> Error in stream generation: {e}")
+            stream_active = False
+
+        finally:
+            # ALWAYS release file handle
+            if cap is not None:
+                cap.release()
+                print("----> VideoCapture released (safe).")
+
+            # Give Windows time to release file lock
+            await asyncio.sleep(0.05)
+
+            # Remove temp file safely
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                    print("----> Temp video deleted:", temp_path)
+            except Exception as e:
+                print("----> Temp delete failed:", e)
+
+    # Create the streaming response
+    response = StreamingResponse(
+        generate_stream(),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+    
+    return response
 
 
